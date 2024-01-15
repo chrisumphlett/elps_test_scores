@@ -1,0 +1,101 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r setup}
+library(tidyverse)
+library(tidylog)
+
+files <- list.files(path = here::here("DATA"), pattern = "*-*.csv", full.names = TRUE)
+dat <- vroom::vroom(files, delim = ",")
+```
+
+``` {r eda}
+glimpse(dat)
+
+cols <- names(dat)
+
+show_vals <- function(.x){
+  dat %>%
+    select(.x) %>%
+    distinct() %>%
+    filter(row_number() <= 15) %>%
+    head(20)
+}
+
+purrr::map(cols, show_vals)
+
+dat2 <- dat %>%
+  select(-c(ISDCode, ISDName, DistrictCode, DistrictName, BuildingCode, CountyCode, CountyName, Locale, MISTEM_NAME, MISTEM_CODE, TotalSurpassed, TotalAttained, TotalEmergingTowards, starts_with("Percent"), MeanPtsEarned, starts_with("ScaleScore"), StdDevSS, ends_with("ScaleScore"))) %>%
+  filter(TestPopulation == "N/A")
+            
+            
+            #PercentAdvanced, PercentProficient, PercentPartiallyProficient, PercentNotProficient, PercentSurpassed, PercentAttained, PercentEmergingTowards, PercentMet))
+
+```
+
+when any combination has less than 10 students they don't report the details. thus I will focus on the 'all buildings' scores for non-white students. It would be possible to do it by school if the data aggregated across grade level (perhaps you can request it that way)
+
+the split b/w proficient and advanced often has too small of numbers to be reported. thus, focus on showing Total Met, and then break down the Did Not Meet into partially proficient and not proficient
+
+```{r}
+dat3 <- dat2 %>%
+  filter(BuildingName == "All Buildings") %>%
+  mutate(Grade = if_else(GradeContentTested == "03", "3rd", paste0(substr(GradeContentTested, 2, 2), "th")),
+         Met = case_when(
+           TotalMet == "*" ~ NA_integer_,
+           str_detect(TotalMet, "<") ~ NA_integer_,
+           TRUE ~ as.integer(TotalMet)
+         ),
+         NotMeet = case_when(
+           TotalDidNotMeet == "*" ~ NA_integer_,
+           str_detect(TotalDidNotMeet, "<") ~ NA_integer_,
+           TRUE ~ as.integer(TotalDidNotMeet)
+         ),
+         PartiallyProficient = case_when(
+           TotalPartiallyProficient == "*" ~ NA_integer_,
+           str_detect(TotalPartiallyProficient, "<") ~ NA_integer_,
+           TRUE ~ as.integer(TotalPartiallyProficient)
+         ),
+         NotProficient = case_when(
+           TotalNotProficient == "*" ~ NA_integer_,
+           str_detect(TotalNotProficient, "<") ~ NA_integer_,
+           TRUE ~ as.integer(TotalNotProficient)
+         ),
+         students_tested = case_when(
+           NumberAssessed == "*" ~ NA_integer_,
+           str_detect(NumberAssessed, "<") ~ NA_integer_,
+           TRUE ~ as.integer(NumberAssessed)
+         ),
+         school_year = str_replace(SchoolYear, " School Year", ""),
+         percent_met = Met / students_tested,
+         group = case_when(
+           ReportCategory %in% c("Female", "Male") ~ "Gender",
+           ReportCategory == "All Students" ~ "All",
+           TRUE ~ "Race"
+         )
+  ) %>%
+  filter(!str_detect(ReportCategory, "Disadvantaged"),
+         !str_detect(ReportCategory, "Learners"),
+         !str_detect(ReportCategory, "Disabilities"),
+         SchoolYear != "20 - 21 School Year",
+         !ReportCategory %in% c("American Indian or Alaska Native", "Native Hawaiian or Other Pacific Islander")) %>%
+  select(school_year, Grade, group, ReportCategory, TestType, Subject, percent_met, Met, NotMeet, PartiallyProficient, NotProficient, students_tested)
+
+
+ggplot(subset(dat3, group == "Gender", Grade == "3rd")) +
+  geom_point(aes(x = school_year, y = percent_met, color = ReportCategory)) +
+  facet_wrap(Subject, scales = "free") +
+  theme_classic() #+
+  labs(x = "",
+       y = "",
+       title = "",
+       subtitle = "",
+       caption = "") +
+  theme(legend.position = "top")
+```
